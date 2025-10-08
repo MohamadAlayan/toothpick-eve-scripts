@@ -84,84 +84,53 @@ def create_mysql_connection(host, user, password, database):
 # TABLE CREATION
 # ================================================================
 
-def create_tables_if_missing(mysql_conn):
-    """Create necessary tables if they don't exist."""
+def setup_database_tables(mysql_conn):
+    """
+    Verify required tables.
+    - Ensure 'patients' and 'doctors' exist (stop if missing)
+    - Create 'migration_log' automatically if it's missing
+    """
     cursor = mysql_conn.cursor()
-
-    # Create patients table
-    patients_table = """
-    CREATE TABLE IF NOT EXISTS patients (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        source_id VARCHAR(50) UNIQUE NOT NULL,
-        first_name VARCHAR(50),
-        last_name VARCHAR(50),
-        father_name VARCHAR(100),
-        mother_name VARCHAR(100),
-        id_nb VARCHAR(50),
-        date_of_birth DATE,
-        gender VARCHAR(10),
-        marital_status VARCHAR(20),
-        nationality VARCHAR(100),
-        phone VARCHAR(50),
-        phone_alt VARCHAR(50),
-        email VARCHAR(100),
-        address_line1 TEXT,
-        address_line2 TEXT,
-        city VARCHAR(50),
-        state VARCHAR(50),
-        zip_code VARCHAR(10),
-        blood_group VARCHAR(5),
-        allergies TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_source_id (source_id),
-        INDEX idx_name (first_name, last_name)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    """
-
-    # Create doctors table
-    doctors_table = """
-    CREATE TABLE IF NOT EXISTS doctors (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        source_id VARCHAR(50) UNIQUE NOT NULL,
-        first_name VARCHAR(50),
-        last_name VARCHAR(50),
-        phone VARCHAR(50),
-        phone_alt VARCHAR(50),
-        license_number VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_source_id (source_id),
-        INDEX idx_name (first_name, last_name)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    """
-
-    # Create migration_log table
-    migration_log_table = """
-    CREATE TABLE IF NOT EXISTS migration_log (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        table_name VARCHAR(50),
-        source_id VARCHAR(50),
-        operation VARCHAR(20),
-        status VARCHAR(20),
-        error_message TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_status (status),
-        INDEX idx_table_source (table_name, source_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    """
+    required_existing = ["patients", "doctors"]
+    log_table = "migration_log"
 
     try:
-        cursor.execute(patients_table)
-        cursor.execute(doctors_table)
-        cursor.execute(migration_log_table)
-        mysql_conn.commit()
-        print("✅ Tables verified/created successfully")
+        # Get all existing tables
+        cursor.execute("SHOW TABLES")
+        existing = {row[0] for row in cursor.fetchall()}
+
+        # Check required ones first
+        missing_required = [t for t in required_existing if t not in existing]
+        if missing_required:
+            raise Exception(f"Missing required tables: {', '.join(missing_required)}. Please create them before running migration.")
+
+        # Create migration_log if not exists
+        if log_table not in existing:
+            print("⚠️ 'migration_log' table not found. Creating it automatically...")
+            cursor.execute("""
+                CREATE TABLE migration_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    table_name VARCHAR(50),
+                    source_id VARCHAR(50),
+                    operation VARCHAR(20),
+                    status VARCHAR(20),
+                    error_message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_status (status),
+                    INDEX idx_table_source (table_name, source_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+            mysql_conn.commit()
+            print("✅ 'migration_log' table created successfully.")
+        else:
+            print("✅ All required tables exist. Proceeding with migration...")
+
     except Exception as e:
-        print(f"❌ Error creating tables: {e}")
-        raise
+        print(f"❌ Table verification error: {e}")
+        raise  # Stop script execution
     finally:
         cursor.close()
+
 
 
 # ================================================================
@@ -211,7 +180,6 @@ def parse_full_name(company, first_nm, last_nm, father_nm):
     father = str(father_nm).strip() if father_nm and str(father_nm) != 'None' else ""
     company = str(company).strip() if company and str(company) != 'None' else ""
 
-    # If no first/last but have company, try to parse company
     if not first and not last and company:
         parts = company.split()
         if len(parts) >= 3:
@@ -220,57 +188,50 @@ def parse_full_name(company, first_nm, last_nm, father_nm):
             first, last = parts[0], parts[1]
         elif len(parts) == 1:
             first = parts[0]
-
     return first or None, last or None, father or None
 
 
 def normalize_gender(g):
     """Normalize gender values."""
-    if not g or str(g) == 'None':
-        return None
+    if not g or str(g) == 'None': return None
     g = str(g).strip().lower()
-    if g in ["male", "m", "1"]:
-        return "Male"
-    if g in ["female", "f", "2"]:
-        return "Female"
+    if g in ["male", "m", "1"]: return "Male"
+    if g in ["female", "f", "2"]: return "Female"
     return None
 
 
 def clean_phone(phone):
     """Clean and format phone numbers."""
-    if not phone or str(phone) == 'None':
-        return None
-    # Remove common non-digit characters but keep + for international
+    if not phone or str(phone) == 'None': return None
     cleaned = re.sub(r'[^\d+]', '', str(phone).strip())
     return cleaned if cleaned else None
 
 
-def safe_date(date_value):
-    """Safely convert date values."""
-    if not date_value or str(date_value) == 'None':
+def safe_datetime(dt_value):
+    """Safely convert to a datetime object, handling various input types."""
+    if not dt_value or str(dt_value) == 'None':
         return None
     try:
-        # If it's already a date object, return it
-        if hasattr(date_value, 'date'):
-            return date_value.date()
-        elif hasattr(date_value, 'year'):
-            return date_value
-        # Try to parse string
+        if isinstance(dt_value, datetime):
+            return dt_value
         from dateutil import parser
-        return parser.parse(str(date_value)).date()
-    except:
+        return parser.parse(str(dt_value))
+    except (ValueError, TypeError):
         return None
+
+
+def safe_date(date_value):
+    """Safely convert date values."""
+    dt = safe_datetime(date_value)
+    return dt.date() if dt else None
 
 
 def safe_string(value, max_length=None):
     """Safely convert to string with length limit."""
-    if value is None or str(value) == 'None':
-        return None
+    if value is None or str(value) == 'None': return None
     s = str(value).strip()
-    if not s:
-        return None
-    if max_length and len(s) > max_length:
-        s = s[:max_length]
+    if not s: return None
+    if max_length and len(s) > max_length: s = s[:max_length]
     return s
 
 
@@ -285,16 +246,15 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map):
     print("=" * 60)
 
     try:
-        # Fetch source data
         mssql_cursor = mssql_conn.cursor()
         query = """
             SELECT ID, COMPANY, FIRST_NM, LAST_NM, FATHER_NM, MOTHER, ID_NO, 
                    BDATE, GENDER, MARITALSTATUS, NATIONALITY, PHONE, MOBILE, 
-                   EMAIL, ADDR1, ADDR2, CITY, STATE, ZIP, Bloodgroup, allergies
+                   EMAIL, ADDR1, ADDR2, CITY, STATE, ZIP, Bloodgroup, allergies,
+                   DATEADDED, Lastupdate
             FROM CUST 
             WHERE ACTIVE = 1
         """
-
         if Config.TEST_MODE:
             query += " AND ID IN (SELECT TOP 10 ID FROM CUST WHERE ACTIVE = 1)"
 
@@ -302,139 +262,74 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map):
         rows = mssql_cursor.fetchall()
         total_records = len(rows)
         print(f"📊 Found {total_records} active patients to migrate")
+        if total_records == 0: return
 
-        if total_records == 0:
-            print("⚠️ No records found to migrate")
-            return
-
-        # Prepare MySQL
         mysql_cursor = mysql_conn.cursor()
-
         insert_query = """
         INSERT INTO patients (
             source_id, first_name, last_name, father_name, mother_name, 
             id_nb, date_of_birth, gender, marital_status, nationality, 
             phone, phone_alt, email, address_line1, address_line2, 
-            city, state, zip_code, blood_group, allergies
+            city, state, zip_code, blood_group, allergies, created_at, updated_at
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         ON DUPLICATE KEY UPDATE
-            first_name = VALUES(first_name),
-            last_name = VALUES(last_name),
-            father_name = VALUES(father_name),
-            mother_name = VALUES(mother_name),
-            id_nb = VALUES(id_nb),
-            date_of_birth = VALUES(date_of_birth),
-            gender = VALUES(gender),
-            marital_status = VALUES(marital_status),
-            nationality = VALUES(nationality),
-            phone = VALUES(phone),
-            phone_alt = VALUES(phone_alt),
-            email = VALUES(email),
-            address_line1 = VALUES(address_line1),
-            address_line2 = VALUES(address_line2),
-            city = VALUES(city),
-            state = VALUES(state),
-            zip_code = VALUES(zip_code),
-            blood_group = VALUES(blood_group),
-            allergies = VALUES(allergies)
+            first_name = VALUES(first_name), last_name = VALUES(last_name),
+            father_name = VALUES(father_name), mother_name = VALUES(mother_name),
+            id_nb = VALUES(id_nb), date_of_birth = VALUES(date_of_birth),
+            gender = VALUES(gender), marital_status = VALUES(marital_status),
+            nationality = VALUES(nationality), phone = VALUES(phone),
+            phone_alt = VALUES(phone_alt), email = VALUES(email),
+            address_line1 = VALUES(address_line1), address_line2 = VALUES(address_line2),
+            city = VALUES(city), state = VALUES(state), zip_code = VALUES(zip_code),
+            blood_group = VALUES(blood_group), allergies = VALUES(allergies),
+            updated_at = VALUES(updated_at)
         """
-
-        # Process records
-        inserted = 0
-        updated = 0
-        errors = []
-        batch_data = []
+        inserted, updated, errors = 0, 0, []
 
         for i, row in enumerate(rows, 1):
             try:
-                # Parse name
-                first, last, father = parse_full_name(
-                    row.COMPANY, row.FIRST_NM, row.LAST_NM, row.FATHER_NM
-                )
+                first, last, father = parse_full_name(row.COMPANY, row.FIRST_NM, row.LAST_NM, row.FATHER_NM)
+                nationality = nationality_map.get(int(row.NATIONALITY)) if isinstance(row.NATIONALITY, (int, float)) else safe_string(row.NATIONALITY, 100)
 
-                # Get nationality
-                nationality = None
-                if row.NATIONALITY:
-                    if isinstance(row.NATIONALITY, (int, float)):
-                        nationality = nationality_map.get(int(row.NATIONALITY))
-                    else:
-                        nationality = safe_string(row.NATIONALITY, 100)
-
-                # Prepare data tuple
                 data = (
-                    safe_string(row.ID, 50),  # source_id
-                    safe_string(first, 50),  # first_name
-                    safe_string(last, 50),  # last_name
-                    safe_string(father, 100),  # father_name
-                    safe_string(row.MOTHER, 100),  # mother_name
-                    safe_string(row.ID_NO, 50),  # id_nb
-                    safe_date(row.BDATE),  # date_of_birth
-                    normalize_gender(row.GENDER),  # gender
-                    safe_string(row.MARITALSTATUS, 20),  # marital_status
-                    nationality,  # nationality
-                    clean_phone(row.PHONE),  # phone
-                    clean_phone(row.MOBILE),  # phone_alt
-                    safe_string(row.EMAIL, 100),  # email
-                    safe_string(row.ADDR1),  # address_line1
-                    safe_string(row.ADDR2),  # address_line2
-                    safe_string(row.CITY, 50),  # city
-                    safe_string(row.STATE, 50),  # state
-                    safe_string(row.ZIP, 10),  # zip_code
-                    safe_string(row.Bloodgroup, 5),  # blood_group
-                    safe_string(row.allergies)  # allergies
+                    safe_string(row.ID, 50), safe_string(first, 50), safe_string(last, 50),
+                    safe_string(father, 100), safe_string(row.MOTHER, 100), safe_string(row.ID_NO, 50),
+                    safe_date(row.BDATE), normalize_gender(row.GENDER), safe_string(row.MARITALSTATUS, 20),
+                    nationality, clean_phone(row.PHONE), clean_phone(row.MOBILE),
+                    safe_string(row.EMAIL, 100), safe_string(row.ADDR1), safe_string(row.ADDR2),
+                    safe_string(row.CITY, 50), safe_string(row.STATE, 50), safe_string(row.ZIP, 10),
+                    safe_string(row.Bloodgroup, 5), safe_string(row.allergies),
+                    safe_datetime(row.DATEADDED), safe_datetime(row.Lastupdate)
                 )
-
-                # Execute insert/update
                 mysql_cursor.execute(insert_query, data)
-
                 if mysql_cursor.rowcount == 1:
                     inserted += 1
                 elif mysql_cursor.rowcount == 2:
                     updated += 1
 
-                # Commit in batches
                 if i % Config.BATCH_SIZE == 0:
                     mysql_conn.commit()
                     print(f"  Progress: {i}/{total_records} ({i * 100 // total_records}%) - Inserted: {inserted}, Updated: {updated}")
-
             except Exception as e:
                 error_msg = f"Patient ID {row.ID}: {str(e)}"
                 errors.append(error_msg)
                 log_error(mysql_conn, 'patients', row.ID, 'INSERT/UPDATE', str(e))
+                if Config.DEBUG_MODE: print(f"  ❌ {error_msg}")
 
-                if Config.DEBUG_MODE:
-                    print(f"  ❌ {error_msg}")
-                    if len(errors) <= 3:  # Show traceback for first 3 errors
-                        traceback.print_exc()
-
-        # Final commit
         mysql_conn.commit()
+        print("\n" + "-" * 60 + f"\n✅ PATIENT MIGRATION COMPLETED\n   Total: {total_records}, Inserted: {inserted}, Updated: {updated}, Errors: {len(errors)}\n" + "-" * 60)
 
-        # Summary
-        print("\n" + "-" * 60)
-        print(f"✅ PATIENT MIGRATION COMPLETED")
-        print(f"   Total Records: {total_records}")
-        print(f"   Inserted: {inserted}")
-        print(f"   Updated: {updated}")
-        print(f"   Errors: {len(errors)}")
-        print("-" * 60)
-
-        # Save error log
         if errors:
             log_path = os.path.join(ensure_logs_folder(), "patient_errors.log")
             with open(log_path, "w", encoding="utf-8") as f:
-                f.write(f"Patient Migration Errors - {datetime.now()}\n")
-                f.write(f"Total Errors: {len(errors)}\n\n")
-                for error in errors:
-                    f.write(f"{error}\n")
+                f.write("\n".join(errors))
             print(f"   Error details saved to: {log_path}")
 
         mssql_cursor.close()
         mysql_cursor.close()
-
     except Exception as e:
         print(f"❌ Critical error in patient migration: {e}")
         traceback.print_exc()
@@ -447,137 +342,61 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map):
 
 def parse_doctor_name(name):
     """Parse doctor name from vendor field."""
-    if not name:
-        return None, None
-
-    # Clean the name
+    if not name: return None, None
     n = str(name).strip()
-    n = re.sub(r"^\d+\s*-\s*", "", n)  # Remove leading numbers
-    n = re.sub(r"^(Dr\.?|DR\.?|dr\.?)\s*", "", n, flags=re.IGNORECASE)  # Remove Dr. prefix
-    n = re.sub(r"/\d+$", "", n)  # Remove trailing /numbers
-
-    if "+" in n:
-        n = n.split("+")[0].strip()
-
-    # Parse into first and last
+    n = re.sub(r"^\d+\s*-\s*", "", n)
+    n = re.sub(r"^(Dr\.?|DR\.?|dr\.?)\s*", "", n, flags=re.IGNORECASE)
+    if "+" in n: n = n.split("+")[0].strip()
     parts = n.split()
-    if not parts:
-        return None, None
-
-    first = parts[0]
-    last = " ".join(parts[1:]) if len(parts) > 1 else None
-
-    return first, last
+    if not parts: return None, None
+    return parts[0], " ".join(parts[1:]) if len(parts) > 1 else None
 
 
 def is_likely_doctor(name):
     """Filter out non-doctor vendor records."""
-    if not name:
-        return False
-
+    if not name: return False
     n = str(name).lower()
-
-    # Keywords that indicate non-doctor entities
-    exclude_keywords = [
-        "company", "co.", "corp", "inc", "ltd", "llc",
-        "laboratory", "lab", "labs",
-        "pharmacy", "pharma", "medical supplies",
-        "clinic", "center", "hospital",
-        "equipment", "supplies", "trading",
-        "شركة", "مختبر", "صيدلية"  # Arabic terms
-    ]
-
-    # Check for exclusion keywords
-    for keyword in exclude_keywords:
-        if keyword in n:
-            return False
-
-    # Positive indicators
-    if any(prefix in n for prefix in ["dr.", "dr ", "doctor"]):
-        return True
-
-    # If it has a person-like structure (2-4 words), likely a doctor
-    parts = name.strip().split()
-    if 2 <= len(parts) <= 4:
-        return True
-
-    return False
+    exclude = ["company", "lab", "pharmacy", "clinic", "center", "hospital", "equipment", "supplies", "trading", "شركة", "مختبر", "صيدلية"]
+    if any(keyword in n for keyword in exclude): return False
+    return True
 
 
 def migrate_doctors(mssql_conn, mysql_conn):
     """Migrate doctors with improved filtering and error handling."""
-    print("\n" + "=" * 60)
-    print("DOCTOR MIGRATION STARTED")
-    print("=" * 60)
-
+    print("\n" + "=" * 60 + "\nDOCTOR MIGRATION STARTED\n" + "=" * 60)
     try:
-        # Fetch source data
         mssql_cursor = mssql_conn.cursor()
         query = "SELECT VENDSRH, COMPANY, PHONE, CONTACT FROM Vend"
-
-        if Config.TEST_MODE:
-            query = "SELECT TOP 10 VENDSRH, COMPANY, PHONE, CONTACT FROM Vend"
-
+        if Config.TEST_MODE: query = "SELECT TOP 10 VENDSRH, COMPANY, PHONE, CONTACT FROM Vend"
         mssql_cursor.execute(query)
         rows = mssql_cursor.fetchall()
         total_records = len(rows)
-        print(f"📊 Found {total_records} vendor records")
+        print(f"📊 Found {total_records} vendor records to process")
+        if total_records == 0: return
 
-        if total_records == 0:
-            print("⚠️ No records found to migrate")
-            return
-
-        # Prepare MySQL
         mysql_cursor = mysql_conn.cursor()
-
         insert_query = """
-        INSERT INTO doctors (
-            source_id, first_name, last_name, phone, phone_alt, license_number
-        ) VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO doctors (source_id, first_name, last_name, phone, phone_alt) 
+        VALUES (%s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-            first_name = VALUES(first_name),
-            last_name = VALUES(last_name),
-            phone = VALUES(phone),
-            phone_alt = VALUES(phone_alt),
-            license_number = VALUES(license_number)
+            first_name = VALUES(first_name), last_name = VALUES(last_name),
+            phone = VALUES(phone), phone_alt = VALUES(phone_alt)
         """
-
-        # Process records
-        inserted = 0
-        updated = 0
-        skipped = []
-        errors = []
+        inserted, updated, skipped, errors = 0, 0, [], []
 
         for i, row in enumerate(rows, 1):
             sid = safe_string(row.VENDSRH, 50)
             company = safe_string(row.COMPANY)
-            phone = clean_phone(row.PHONE)
-            contact = clean_phone(row.CONTACT)
-
             try:
-                # Check if likely a doctor
                 if not is_likely_doctor(company):
-                    skipped.append(f"{sid}: {company} (filtered as non-doctor)")
+                    skipped.append(f"{sid}: {company} (filtered)")
                     continue
-
-                # Parse name
                 first, last = parse_doctor_name(company)
-
                 if not first:
-                    skipped.append(f"{sid}: {company} (could not parse name)")
+                    skipped.append(f"{sid}: {company} (no name parsed)")
                     continue
 
-                # Prepare data
-                data = (
-                    sid,  # source_id
-                    safe_string(first, 50),  # first_name
-                    safe_string(last, 50),  # last_name
-                    phone,  # phone
-                    contact,  # phone_alt
-                    None
-                )
-
-                # Execute insert/update
+                data = (sid, safe_string(first, 50), safe_string(last, 50), clean_phone(row.PHONE), clean_phone(row.CONTACT))
                 mysql_cursor.execute(insert_query, data)
 
                 if mysql_cursor.rowcount == 1:
@@ -585,57 +404,26 @@ def migrate_doctors(mssql_conn, mysql_conn):
                 elif mysql_cursor.rowcount == 2:
                     updated += 1
 
-                # Commit in batches
                 if i % Config.BATCH_SIZE == 0:
                     mysql_conn.commit()
-                    processed = inserted + updated + len(skipped)
-                    print(f"  Progress: {processed}/{total_records} - Inserted: {inserted}, Updated: {updated}, Skipped: {len(skipped)}")
-
             except Exception as e:
-                error_msg = f"Doctor ID {sid}: {str(e)}"
-                errors.append(error_msg)
+                errors.append(f"Doctor ID {sid}: {str(e)}")
                 log_error(mysql_conn, 'doctors', sid, 'INSERT/UPDATE', str(e))
 
-                if Config.DEBUG_MODE:
-                    print(f"  ❌ {error_msg}")
-
-        # Final commit
         mysql_conn.commit()
+        print(
+            "\n" + "-" * 60 + f"\n✅ DOCTOR MIGRATION COMPLETED\n   Total: {total_records}, Inserted: {inserted}, Updated: {updated}, Skipped: {len(skipped)}, Errors: {len(errors)}\n" + "-" * 60)
 
-        # Summary
-        print("\n" + "-" * 60)
-        print(f"✅ DOCTOR MIGRATION COMPLETED")
-        print(f"   Total Records: {total_records}")
-        print(f"   Inserted: {inserted}")
-        print(f"   Updated: {updated}")
-        print(f"   Skipped: {len(skipped)}")
-        print(f"   Errors: {len(errors)}")
-        print("-" * 60)
-
-        # Save logs
         log_dir = ensure_logs_folder()
-
         if skipped:
-            log_path = os.path.join(log_dir, "doctors_skipped.log")
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.write(f"Skipped Doctors - {datetime.now()}\n")
-                f.write(f"Total Skipped: {len(skipped)}\n\n")
-                for skip in skipped:
-                    f.write(f"{skip}\n")
-            print(f"   Skipped records saved to: {log_path}")
-
+            with open(os.path.join(log_dir, "doctors_skipped.log"), "w", encoding="utf-8") as f: f.write("\n".join(skipped))
+            print(f"   Skipped records log saved.")
         if errors:
-            log_path = os.path.join(log_dir, "doctors_errors.log")
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.write(f"Doctor Migration Errors - {datetime.now()}\n")
-                f.write(f"Total Errors: {len(errors)}\n\n")
-                for error in errors:
-                    f.write(f"{error}\n")
-            print(f"   Error details saved to: {log_path}")
+            with open(os.path.join(log_dir, "doctors_errors.log"), "w", encoding="utf-8") as f: f.write("\n".join(errors))
+            print(f"   Error details log saved.")
 
         mssql_cursor.close()
         mysql_cursor.close()
-
     except Exception as e:
         print(f"❌ Critical error in doctor migration: {e}")
         traceback.print_exc()
@@ -648,44 +436,19 @@ def migrate_doctors(mssql_conn, mysql_conn):
 
 def verify_migration(mysql_conn):
     """Verify migration results."""
-    print("\n" + "=" * 60)
-    print("MIGRATION VERIFICATION")
-    print("=" * 60)
-
+    print("\n" + "=" * 60 + "\nMIGRATION VERIFICATION\n" + "=" * 60)
     try:
         cursor = mysql_conn.cursor()
-
-        # Check patients
-        cursor.execute("SELECT COUNT(*) FROM patients")
-        patient_count = cursor.fetchone()[0]
-        print(f"✅ Patients in database: {patient_count}")
-
-        # Check doctors
-        cursor.execute("SELECT COUNT(*) FROM doctors")
-        doctor_count = cursor.fetchone()[0]
-        print(f"✅ Doctors in database: {doctor_count}")
-
-        # Check migration log
+        cursor.execute("SELECT COUNT(*) FROM patients");
+        print(f"✅ Patients in database: {cursor.fetchone()[0]}")
+        cursor.execute("SELECT COUNT(*) FROM doctors");
+        print(f"✅ Doctors in database: {cursor.fetchone()[0]}")
         cursor.execute("SELECT status, COUNT(*) FROM migration_log GROUP BY status")
         log_stats = cursor.fetchall()
         if log_stats:
             print("\n📊 Migration Log Summary:")
-            for status, count in log_stats:
-                print(f"   {status}: {count}")
-
-        # Sample data
-        print("\n📋 Sample Patient Records:")
-        cursor.execute("SELECT source_id, first_name, last_name FROM patients LIMIT 5")
-        for row in cursor.fetchall():
-            print(f"   ID: {row[0]}, Name: {row[1]} {row[2]}")
-
-        print("\n📋 Sample Doctor Records:")
-        cursor.execute("SELECT source_id, first_name, last_name FROM doctors LIMIT 5")
-        for row in cursor.fetchall():
-            print(f"   ID: {row[0]}, Name: {row[1]} {row[2]}")
-
+            for status, count in log_stats: print(f"   {status}: {count}")
         cursor.close()
-
     except Exception as e:
         print(f"❌ Error during verification: {e}")
 
@@ -695,73 +458,37 @@ def verify_migration(mysql_conn):
 # ================================================================
 
 def main():
-    """Main migration process with enhanced error handling."""
-    print("\n" + "=" * 60)
-    print("🚀 TOOTHPICK EVE DATA MIGRATION TOOL")
-    print("=" * 60)
-    print(f"Mode: {'TEST' if Config.TEST_MODE else 'PRODUCTION'}")
-    print(f"Debug: {'ON' if Config.DEBUG_MODE else 'OFF'}")
-    print(f"Batch Size: {Config.BATCH_SIZE}")
+    """Main migration process."""
+    print("\n" + "=" * 60 + "\n🚀 TOOTHPICK EVE DATA MIGRATION TOOL\n" + "=" * 60)
+    print(f"Mode: {'TEST' if Config.TEST_MODE else 'PRODUCTION'}, Debug: {'ON' if Config.DEBUG_MODE else 'OFF'}, Batch Size: {Config.BATCH_SIZE}")
     print("=" * 60)
 
-    # Establish connections
-    print("\n📡 Establishing Database Connections...")
-
-    mssql = create_mssql_connection(
-        Config.MSSQL_SERVER,
-        Config.MSSQL_DATABASE,
-        Config.USE_WINDOWS_AUTH,
-        Config.MSSQL_USERNAME,
-        Config.MSSQL_PASSWORD
-    )
-
-    mysql = create_mysql_connection(
-        Config.MYSQL_HOST,
-        Config.MYSQL_USER,
-        Config.MYSQL_PASSWORD,
-        Config.MYSQL_DATABASE
-    )
+    mssql = create_mssql_connection(Config.MSSQL_SERVER, Config.MSSQL_DATABASE, Config.USE_WINDOWS_AUTH, Config.MSSQL_USERNAME, Config.MSSQL_PASSWORD)
+    mysql = create_mysql_connection(Config.MYSQL_HOST, Config.MYSQL_USER, Config.MYSQL_PASSWORD, Config.MYSQL_DATABASE)
 
     if not mssql or not mysql:
-        print("\n❌ Migration aborted: Could not establish database connections")
+        print("\n❌ Aborted: Could not establish database connections")
         return 1
 
     try:
-        # Create tables if needed
-        if Config.CREATE_TABLES:
-            print("\n🔧 Verifying/Creating Tables...")
-            create_tables_if_missing(mysql)
+        setup_database_tables(mysql)
 
-        # Load reference data
-        print("\n📚 Loading Reference Data...")
         nationality_map = load_nationality_mapping(mssql)
-
-        # Run migrations
         migrate_patients(mssql, mysql, nationality_map)
         migrate_doctors(mssql, mysql)
-
-        # Verify results
         verify_migration(mysql)
 
-        print("\n" + "=" * 60)
-        print("✅ MIGRATION COMPLETED SUCCESSFULLY")
-        print("=" * 60)
+        print("\n" + "=" * 60 + "\n✅ MIGRATION COMPLETED SUCCESSFULLY\n" + "=" * 60)
         return 0
 
     except Exception as e:
-        print(f"\n❌ Migration failed with error: {e}")
-        traceback.print_exc()
+        print(f"\n❌ MIGRATION FAILED WITH A CRITICAL ERROR: {e}")
         return 1
 
     finally:
-        # Clean up connections
         print("\n🔒 Closing Database Connections...")
-        if mssql:
-            mssql.close()
-            print("   SQL Server connection closed")
-        if mysql and mysql.is_connected():
-            mysql.close()
-            print("   MySQL connection closed")
+        if mssql: mssql.close(); print("   SQL Server connection closed")
+        if mysql and mysql.is_connected(): mysql.close(); print("   MySQL connection closed")
 
 
 if __name__ == "__main__":

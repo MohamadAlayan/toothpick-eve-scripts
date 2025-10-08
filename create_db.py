@@ -73,6 +73,8 @@ def create_tables(connection):
         blood_group VARCHAR(5),
         allergies TEXT,
         medical_history TEXT,
+        created_at TIMESTAMP NULL DEFAULT NULL,
+        updated_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_source_id (source_id)
     )
     """
@@ -84,7 +86,8 @@ def create_tables(connection):
         patient_id INT,           -- maps to source_id of patient
         related_patient_id INT,   -- maps to source_id of related patient
         relationship_type VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP NULL DEFAULT NULL,
+        updated_at TIMESTAMP NULL DEFAULT NULL
     )
     """
 
@@ -106,8 +109,8 @@ def create_tables(connection):
         consultation_fee DECIMAL(10, 2),
         available_days VARCHAR(100),
         available_hours VARCHAR(100),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NULL DEFAULT NULL,
+        updated_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_source_id (source_id)
     )
     """
@@ -129,8 +132,8 @@ def create_tables(connection):
         diagnosis TEXT,
         prescription TEXT,
         notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NULL DEFAULT NULL,
+        updated_at TIMESTAMP NULL DEFAULT NULL,
         INDEX idx_source_id (source_id)
     )
     """
@@ -154,8 +157,8 @@ def create_tables(connection):
         payment_method VARCHAR(50),  -- ENUM not allowed (Cash, Card, etc.)
         payment_date DATE,
         notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        created_at TIMESTAMP NULL DEFAULT NULL,
+        updated_at TIMESTAMP NULL DEFAULT NULL
     )
     """
 
