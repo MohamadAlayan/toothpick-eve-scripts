@@ -1,9 +1,22 @@
+# ---------------------------------------------
+# ToothpickEVE - Database Setup Script
+# Purpose: Create a cleaned MySQL database for clinic analytics
+#
+# Notes:
+#   - ❌ No ENUM fields are allowed.
+#     All fields that could use ENUM (e.g. gender, marital_status, status)
+#     are defined as VARCHAR for flexibility.
+#   - ❌ No foreign key constraints.
+#     Relationships will be handled using `source_id` fields only.
+#   - ✅ Designed for easy data import and transformation from multiple sources.
+# ---------------------------------------------
+
 import mysql.connector
 from mysql.connector import Error
 
 
 def create_database_connection(host, user, password):
-    """Create a connection to MySQL server"""
+    """Connect to MySQL server without selecting a specific database"""
     try:
         connection = mysql.connector.connect(
             host=host,
@@ -19,7 +32,7 @@ def create_database_connection(host, user, password):
 
 
 def create_database(connection, db_name):
-    """Create database if it doesn't exist"""
+    """Create the new cleaned database if it doesn't already exist"""
     try:
         cursor = connection.cursor()
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name}")
@@ -31,22 +44,22 @@ def create_database(connection, db_name):
 
 
 def create_tables(connection):
-    """Create all tables for the patient management system"""
+    """Create all tables needed for the cleaned system"""
     cursor = connection.cursor()
 
-    # Patients table
+    # ---------------- Patients Table ----------------
     patients_table = """
     CREATE TABLE IF NOT EXISTS patients (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        source_id  INT,
+        source_id INT,  -- Link to original system patient ID
         first_name VARCHAR(100),
         father_name VARCHAR(100),
         last_name VARCHAR(100),
         mother_name VARCHAR(100),
         id_nb VARCHAR(50),
         date_of_birth DATE,
-        gender VARCHAR(20),
-        marital_status VARCHAR(20),
+        gender VARCHAR(20),  -- ENUM not allowed (use VARCHAR)
+        marital_status VARCHAR(20),  -- ENUM not allowed
         nationality VARCHAR(100),
         phone VARCHAR(100),
         phone_alt VARCHAR(100),
@@ -64,22 +77,22 @@ def create_tables(connection):
     )
     """
 
-    # Patient Relationships table
+    # ---------------- Patient Relationships Table ----------------
     patient_relationships_table = """
     CREATE TABLE IF NOT EXISTS patient_relationships (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        patient_id INT NOT NULL,
-        related_patient_id INT NOT NULL,
+        patient_id INT,           -- maps to source_id of patient
+        related_patient_id INT,   -- maps to source_id of related patient
         relationship_type VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
-    # Doctors table
+    # ---------------- Doctors Table ----------------
     doctors_table = """
     CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        source_id  INT,
+        source_id INT,  -- Original doctor ID
         first_name VARCHAR(50),
         father_name VARCHAR(100),
         last_name VARCHAR(50),
@@ -99,19 +112,19 @@ def create_tables(connection):
     )
     """
 
-    # Appointments table
+    # ---------------- Appointments Table ----------------
     appointments_table = """
     CREATE TABLE IF NOT EXISTS appointments (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        source_id  INT COMMENT 'Organization or clinic ID',
-        patient_id INT COMMENT 'Patient ID',
-        doctor_id INT COMMENT 'Doctor ID',
+        source_id INT COMMENT 'Original appointment ID from source system',
+        patient_id INT COMMENT 'Patient source_id (not FK)',
+        doctor_id INT COMMENT 'Doctor source_id (not FK)',
         appointment_date DATE,
         appointment_time TIME,
-        duration VARCHAR(50) COMMENT 'Duration of the appointment (e.g., 30 mins, 1 hour)',
-        revision_number INT COMMENT 'Number of times the appointment has been revised or rescheduled',
-        room VARCHAR(50) COMMENT 'Room or location where the appointment will take place',
-        status VARCHAR(50) COMMENT 'Scheduled, Completed, Cancelled, No-Show',
+        duration VARCHAR(50),
+        revision_number INT,
+        room VARCHAR(50),
+        status VARCHAR(50),  -- ENUM not allowed (Scheduled, Completed, etc.)
         reason_for_visit TEXT,
         diagnosis TEXT,
         prescription TEXT,
@@ -122,12 +135,12 @@ def create_tables(connection):
     )
     """
 
-    # Billing table
+    # ---------------- Billing Table ----------------
     billing_table = """
     CREATE TABLE IF NOT EXISTS billing (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        patient_id INT COMMENT 'Patient ID',
-        appointment_id INT COMMENT 'Appointment ID',
+        patient_id INT COMMENT 'Patient source_id',
+        appointment_id INT COMMENT 'Appointment source_id',
         bill_date DATE,
         consultation_charges DECIMAL(10, 2) DEFAULT 0.00,
         medication_charges DECIMAL(10, 2) DEFAULT 0.00,
@@ -137,8 +150,8 @@ def create_tables(connection):
         discount DECIMAL(10, 2) DEFAULT 0.00,
         tax DECIMAL(10, 2) DEFAULT 0.00,
         net_amount DECIMAL(10, 2),
-        payment_status VARCHAR(50) COMMENT 'Paid, Pending, Partially Paid',
-        payment_method VARCHAR(50) COMMENT 'Cash, Card, Insurance, Online',
+        payment_status VARCHAR(50),  -- ENUM not allowed (Paid, Pending, etc.)
+        payment_method VARCHAR(50),  -- ENUM not allowed (Cash, Card, etc.)
         payment_date DATE,
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -146,7 +159,7 @@ def create_tables(connection):
     )
     """
 
-    # Dictionary of tables for easy iteration
+    # Store table definitions
     tables = {
         'patients': patients_table,
         'doctors': doctors_table,
@@ -163,29 +176,28 @@ def create_tables(connection):
         connection.commit()
         cursor.close()
         print("\n✅ All tables created successfully!")
-
     except Error as e:
         print(f"❌ Error creating tables: {e}")
 
 
 def main():
-    # Database configuration
+    """Main function to initialize the database"""
     HOST = 'localhost'
-    USER = 'root'  # Change to your MySQL username
-    PASSWORD = 'P@ssw0rd8899'  # Change to your MySQL password
+    USER = 'root'
+    PASSWORD = 'P@ssw0rd8899'
     DATABASE_NAME = 'patient_management_system'
 
-    # Create connection
+    # Step 1: Connect to server
     connection = create_database_connection(HOST, USER, PASSWORD)
 
     if connection:
-        # Create database
+        # Step 2: Create or select database
         create_database(connection, DATABASE_NAME)
 
-        # Create tables
+        # Step 3: Create all tables
         create_tables(connection)
 
-        # Close connection
+        # Step 4: Close connection
         if connection.is_connected():
             connection.close()
             print("\n🔒 MySQL connection closed")
@@ -193,3 +205,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
