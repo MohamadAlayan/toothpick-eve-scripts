@@ -73,7 +73,7 @@ def create_tables(connection):
         blood_group VARCHAR(5),
         allergies TEXT,
         medical_history TEXT,
-        INDEX idx_org_id (org_id)
+        INDEX idx_source_id (source_id)
     )
     """
 
@@ -108,7 +108,7 @@ def create_tables(connection):
         available_hours VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_org_id (org_id)
+        INDEX idx_source_id (source_id)
     )
     """
 
@@ -131,7 +131,7 @@ def create_tables(connection):
         notes TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_org_id (org_id)
+        INDEX idx_source_id (source_id)
     )
     """
 
@@ -205,5 +205,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
