@@ -6,7 +6,7 @@ import re
 
 
 # =====================================================================
-# DATABASE CONNECTION FUNCTIONS
+# DATABASE CONNECTION FUNCTIONS (No changes needed here)
 # =====================================================================
 
 def create_mssql_connection(server, database, use_windows_auth=True, username=None, password=None):
@@ -43,7 +43,7 @@ def create_mysql_connection(host, user, password, database):
 
 
 # =====================================================================
-# PATIENT MIGRATION FUNCTIONS
+# PATIENT MIGRATION FUNCTIONS (Updated for Upsert)
 # =====================================================================
 
 def load_nationality_mapping(mssql_conn):
@@ -81,11 +81,14 @@ def parse_full_name(company_name, first_nm, last_nm, father_nm):
 
 def normalize_gender(gender):
     """Normalize gender value"""
-    if not gender: return None
-    gender_upper = str(gender).strip().upper()
-    if gender_upper in ['MALE', 'M']: return 'Male'
-    if gender_upper in ['FEMALE', 'F']: return 'Female'
-    return gender
+    if not gender:
+        return None
+    gender_str = str(gender).strip().lower()
+    if gender_str in ['male', 'm']:
+        return 'male'
+    if gender_str in ['female', 'f']:
+        return 'female'
+    return gender_str
 
 
 def get_nationality_name(nationality_id, nationality_map):
@@ -105,33 +108,41 @@ def format_phone(phone):
 
 
 def migrate_patients(mssql_conn, mysql_conn, nationality_map, org_id=1):
-    """Migrate patient data from SQL Server to MySQL"""
+    """Migrate patient data from SQL Server to MySQL using an UPSERT strategy."""
     print("\n" + "=" * 50)
-    print("--- Starting Patient Migration ---")
+    print("--- Starting Patient Migration (Upsert Mode) ---")
     print("=" * 50)
 
     try:
         mssql_cursor = mssql_conn.cursor()
         query = """
-        SELECT IID, COMPANY, FIRST_NM, LAST_NM, FATHER_NM, MOTHER, ID_NO, BDATE, GENDER,
+        SELECT ID, COMPANY, FIRST_NM, LAST_NM, FATHER_NM, MOTHER, ID_NO, BDATE, GENDER,
                MARITALSTATUS, NATIONALITY, PHONE, MOBILE, EMAIL, ADDR1, ADDR2, CITY,
                STATE, ZIP, Bloodgroup, allergies
         FROM CUST WHERE ACTIVE = 1
         """
         mssql_cursor.execute(query)
         rows = mssql_cursor.fetchall()
-        print(f"📊 Found {len(rows)} patients to migrate.")
+        print(f"📊 Found {len(rows)} patients to process from source.")
 
         mysql_cursor = mysql_conn.cursor()
-        insert_query = """
+
+        upsert_query = """
         INSERT INTO patients (
-            org_id, first_name, last_name, father_name, mother_name, id_nb, date_of_birth,
+            source_id, org_id, first_name, last_name, father_name, mother_name, id_nb, date_of_birth,
             gender, marital_status, nationality, phone, phone_alt, email, address_line1,
             address_line2, city, state, zip_code, blood_group, allergies
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            org_id=VALUES(org_id), first_name=VALUES(first_name), last_name=VALUES(last_name),
+            father_name=VALUES(father_name), mother_name=VALUES(mother_name), id_nb=VALUES(id_nb),
+            date_of_birth=VALUES(date_of_birth), gender=VALUES(gender), marital_status=VALUES(marital_status),
+            nationality=VALUES(nationality), phone=VALUES(phone), phone_alt=VALUES(phone_alt), email=VALUES(email),
+            address_line1=VALUES(address_line1), address_line2=VALUES(address_line2), city=VALUES(city),
+            state=VALUES(state), zip_code=VALUES(zip_code), blood_group=VALUES(blood_group), allergies=VALUES(allergies);
         """
 
-        success_count, error_count = 0, 0
+        inserted_count, updated_count, error_count = 0, 0, 0
         errors_log = []
 
         for row in rows:
@@ -139,6 +150,7 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map, org_id=1):
                 first_name, last_name, father_name = parse_full_name(row.COMPANY, row.FIRST_NM, row.LAST_NM, row.FATHER_NM)
 
                 values = (
+                    row.IID,  # --- MODIFICATION: Added source_id ---
                     org_id,
                     first_name[:50] if first_name else None,
                     last_name[:50] if last_name else None,
@@ -147,7 +159,7 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map, org_id=1):
                     str(row.ID_NO).strip()[:50] if row.ID_NO else None,
                     row.BDATE,
                     normalize_gender(row.GENDER),
-                    None,  # Marital Status - not mapped in this script
+                    None,
                     get_nationality_name(row.NATIONALITY, nationality_map),
                     format_phone(row.PHONE),
                     format_phone(row.MOBILE),
@@ -160,15 +172,22 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map, org_id=1):
                     str(row.Bloodgroup).strip()[:5] if row.Bloodgroup else None,
                     str(row.allergies).strip() if row.allergies else None
                 )
-                mysql_cursor.execute(insert_query, values)
-                success_count += 1
+                mysql_cursor.execute(upsert_query, values)
+
+                # --- MODIFICATION: Check rowcount to see if it was an insert or update ---
+                # For INSERT, rowcount is 1. For UPDATE, rowcount is 2. For no change, it's 0.
+                if mysql_cursor.rowcount == 1:
+                    inserted_count += 1
+                elif mysql_cursor.rowcount == 2:
+                    updated_count += 1
+
             except Exception as e:
                 error_count += 1
-                error_msg = f"Patient IID {row.IID}: {e}"
+                error_msg = f"Patient Source ID {row.IID}: {e}"
                 errors_log.append(error_msg)
 
         mysql_conn.commit()
-        print(f"✅ Patient migration completed. Success: {success_count}, Errors: {error_count}")
+        print(f"✅ Patient processing completed. Inserted: {inserted_count}, Updated: {updated_count}, Errors: {error_count}")
 
         if errors_log:
             with open('migration_errors.log', 'w', encoding='utf-8') as f:
@@ -184,7 +203,7 @@ def migrate_patients(mssql_conn, mysql_conn, nationality_map, org_id=1):
 
 
 # =====================================================================
-# DOCTOR MIGRATION FUNCTIONS
+# DOCTOR MIGRATION FUNCTIONS (Updated for Upsert)
 # =====================================================================
 
 def is_likely_doctor(company_name):
@@ -221,9 +240,9 @@ def clean_phone_number(phone_str):
 
 
 def migrate_doctors(mssql_conn, mysql_conn, org_id=1):
-    """Fetches, transforms, and migrates doctor data from the 'Vend' table."""
+    """Fetches, transforms, and migrates doctor data using an UPSERT strategy."""
     print("\n" + "=" * 50)
-    print("--- Starting Doctor Migration ---")
+    print("--- Starting Doctor Migration (Upsert Mode) ---")
     print("=" * 50)
 
     try:
@@ -234,13 +253,18 @@ def migrate_doctors(mssql_conn, mysql_conn, org_id=1):
         print(f"📊 Found {len(rows)} total records in source table 'Vend'.")
 
         mysql_cursor = mysql_conn.cursor()
-        insert_query = """
+        # --- MODIFICATION: Updated query for UPSERT ---
+        upsert_query = """
         INSERT INTO doctors (
-            org_id, first_name, last_name, phone, phone_alt, license_number
-        ) VALUES (%s, %s, %s, %s, %s, %s)
+            source_id, org_id, first_name, last_name, phone, phone_alt, license_number
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            org_id=VALUES(org_id), first_name=VALUES(first_name), last_name=VALUES(last_name),
+            phone=VALUES(phone), phone_alt=VALUES(phone_alt), license_number=VALUES(license_number);
         """
 
-        records_to_insert, skipped_log, error_log = [], [], []
+        inserted_count, updated_count, error_count = 0, 0, 0
+        skipped_log, error_log = [], []
 
         for row in rows:
             vendsrh, company, phone, contact = row
@@ -248,35 +272,45 @@ def migrate_doctors(mssql_conn, mysql_conn, org_id=1):
 
             try:
                 if not is_likely_doctor(original_company):
-                    skipped_log.append(f"ID {vendsrh}: '{original_company}' (Reason: Matched non-doctor keyword)")
+                    skipped_log.append(f"Source ID {vendsrh}: '{original_company}' (Reason: Matched non-doctor keyword)")
                     continue
 
                 first_name, last_name = parse_doctor_name(original_company)
                 if not first_name:
-                    skipped_log.append(f"ID {vendsrh}: '{original_company}' (Reason: Could not parse a valid name)")
+                    skipped_log.append(f"Source ID {vendsrh}: '{original_company}' (Reason: Could not parse a valid name)")
                     continue
 
-                records_to_insert.append((
+                values = (
+                    str(vendsrh),  # --- MODIFICATION: Added source_id ---
                     org_id,
                     first_name[:50],
                     last_name[:50] if last_name else None,
                     clean_phone_number(phone),
                     clean_phone_number(contact),
-                    str(vendsrh)
-                ))
-            except Exception as e:
-                error_log.append(f"ID {vendsrh}: '{original_company}' - ERROR: {e}")
+                    str(vendsrh)  # Using source ID as license number
+                )
 
-        if records_to_insert:
-            mysql_cursor.executemany(insert_query, records_to_insert)
-            mysql_conn.commit()
+                mysql_cursor.execute(upsert_query, values)
+
+                # --- MODIFICATION: Check rowcount to see if it was an insert or update ---
+                if mysql_cursor.rowcount == 1:
+                    inserted_count += 1
+                elif mysql_cursor.rowcount == 2:
+                    updated_count += 1
+
+            except Exception as e:
+                error_count += 1
+                error_log.append(f"Source ID {vendsrh}: '{original_company}' - ERROR: {e}")
+
+        mysql_conn.commit()
 
         print("\n" + "=" * 30)
         print("DOCTOR MIGRATION SUMMARY")
         print("=" * 30)
-        print(f"✅ Successfully migrated: {len(records_to_insert)} doctors")
-        print(f"⏭️  Skipped records:      {len(skipped_log)} (see skipped_doctors.log)")
-        print(f"❌ Errored records:      {len(error_log)} (see doctors_migration_errors.log)")
+        print(f"✅ Inserted new doctors: {inserted_count}")
+        print(f"🔄 Updated existing doctors: {updated_count}")
+        print(f"⏭️  Skipped records:        {len(skipped_log)} (see skipped_doctors.log)")
+        print(f"❌ Errored records:        {len(error_log)} (see doctors_migration_errors.log)")
 
         if skipped_log:
             with open('skipped_doctors.log', 'w', encoding='utf-8') as f:
@@ -296,55 +330,46 @@ def migrate_doctors(mssql_conn, mysql_conn, org_id=1):
 
 
 # =====================================================================
-# MAIN SCRIPT EXECUTION
+# MAIN SCRIPT EXECUTION (Updated for better connection handling)
 # =====================================================================
 
 def main():
     """Main function to orchestrate the entire migration process."""
-    print("🚀 Starting Full Data Migration: Patients and Doctors 🚀")
+    print("🚀 Starting Full Data Migration: Patients and Doctors (Upsert Mode) 🚀")
 
     # --- CONFIGURE YOUR DATABASE CONNECTIONS HERE ---
-    # MS SQL Server (Source)
     MSSQL_SERVER = 'localhost'
     MSSQL_DATABASE = 'BizriDental'
     USE_WINDOWS_AUTH = True
     MSSQL_USERNAME = None
     MSSQL_PASSWORD = None
 
-    # MySQL (Destination) - IMPORTANT: For production, use environment variables for the password.
     MYSQL_HOST = 'localhost'
     MYSQL_USER = 'root'
-    MYSQL_PASSWORD = 'P@ssw0rd8899'  # <-- Change this password
+    MYSQL_PASSWORD = 'P@ssw0rd8899'
     MYSQL_DATABASE = 'patient_management_system'
-
-    # General Migration Settings
     ORG_ID = 1
 
-    # --- SCRIPT EXECUTION ---
     mssql_conn = create_mssql_connection(MSSQL_SERVER, MSSQL_DATABASE, USE_WINDOWS_AUTH, MSSQL_USERNAME, MSSQL_PASSWORD)
     mysql_conn = create_mysql_connection(MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE)
 
     if mssql_conn and mysql_conn:
-        # Step 1: Migrate Patients
-        nationality_map = load_nationality_mapping(mssql_conn)
-        migrate_patients(mssql_conn, mysql_conn, nationality_map, ORG_ID)
+        try:
+            # Step 1: Migrate Patients
+            nationality_map = load_nationality_mapping(mssql_conn)
+            migrate_patients(mssql_conn, mysql_conn, nationality_map, ORG_ID)
 
-        # Step 2: Migrate Doctors
-        # We need a new connection/cursor as the previous one was closed
-        mssql_conn_for_doctors = create_mssql_connection(MSSQL_SERVER, MSSQL_DATABASE, USE_WINDOWS_AUTH, MSSQL_USERNAME, MSSQL_PASSWORD)
-        if mssql_conn_for_doctors:
-            migrate_doctors(mssql_conn_for_doctors, mysql_conn, ORG_ID)
-            mssql_conn_for_doctors.close()
-        else:
-            print("❌ Could not re-establish connection to SQL Server for doctor migration.")
-
+            # Step 2: Migrate Doctors
+            # --- MODIFICATION: No need to reconnect, just reuse the existing connection ---
+            migrate_doctors(mssql_conn, mysql_conn, ORG_ID)
+        finally:
+            # Cleanly close connections
+            if mssql_conn: mssql_conn.close()
+            if mysql_conn and mysql_conn.is_connected(): mysql_conn.close()
+            print("\n🔒 Database connections closed.")
     else:
         print("\n❌ Migration aborted due to initial database connection failure.")
         return
-
-    # Cleanly close remaining connections
-    if mssql_conn: mssql_conn.close()
-    if mysql_conn and mysql_conn.is_connected(): mysql_conn.close()
 
     print("\n" + "=" * 50)
     print("✅ Full migration process completed.")

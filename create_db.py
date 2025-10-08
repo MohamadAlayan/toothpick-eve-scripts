@@ -38,10 +38,10 @@ def create_tables(connection):
     patients_table = """
     CREATE TABLE IF NOT EXISTS patients (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        org_id INT,
-        first_name VARCHAR(50),
-        last_name VARCHAR(50),
+        source_id  INT,
+        first_name VARCHAR(100),
         father_name VARCHAR(100),
+        last_name VARCHAR(100),
         mother_name VARCHAR(100),
         id_nb VARCHAR(50),
         date_of_birth DATE,
@@ -79,7 +79,7 @@ def create_tables(connection):
     doctors_table = """
     CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        org_id INT,
+        source_id  INT,
         first_name VARCHAR(50),
         father_name VARCHAR(100),
         last_name VARCHAR(50),
@@ -103,12 +103,12 @@ def create_tables(connection):
     appointments_table = """
     CREATE TABLE IF NOT EXISTS appointments (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        org_id INT COMMENT 'Organization or clinic ID',
+        source_id  INT COMMENT 'Organization or clinic ID',
         patient_id INT COMMENT 'Patient ID',
         doctor_id INT COMMENT 'Doctor ID',
         appointment_date DATE,
         appointment_time TIME,
-        period VARCHAR(50) COMMENT 'Morning, Afternoon, Evening, or custom label',
+        duration VARCHAR(50) COMMENT 'Duration of the appointment (e.g., 30 mins, 1 hour)',
         revision_number INT COMMENT 'Number of times the appointment has been revised or rescheduled',
         room VARCHAR(50) COMMENT 'Room or location where the appointment will take place',
         status VARCHAR(50) COMMENT 'Scheduled, Completed, Cancelled, No-Show',
