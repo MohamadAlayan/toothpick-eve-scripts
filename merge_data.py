@@ -574,7 +574,7 @@ def migrate_doctors(mssql_conn, mysql_conn):
                     safe_string(last, 50),  # last_name
                     phone,  # phone
                     contact,  # phone_alt
-                    sid  # license_number (using source_id as placeholder)
+                    None
                 )
 
                 # Execute insert/update
