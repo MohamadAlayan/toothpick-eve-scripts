@@ -159,9 +159,9 @@ def normalize_gender(g):
         return None
     g = str(g).strip().lower()
     if g in ["male", "m", "1"]:
-        return "Male"
+        return "male"
     if g in ["female", "f", "2"]:
-        return "Female"
+        return "female"
     return None
 
 
@@ -209,30 +209,90 @@ def safe_time(time_str):
 
 
 def is_likely_doctor(company_name):
-    """Check if vendor name suggests it's a doctor."""
+    """Check if vendor name suggests it's NOT a doctor/person (i.e., a company/lab)."""
     if not company_name:
         return False
 
     company_lower = company_name.lower()
-    doctor_indicators = ['dr.', 'dr ', 'doctor', 'dds', 'dmd', 'phd', 'md']
 
-    return any(indicator in company_lower for indicator in doctor_indicators)
+    # Exclude obvious companies/labs/suppliers
+    exclude_keywords = [
+        'company for dental', 'dental products', 'company for dent',
+        'dental care', 'dental store', 'dental supplies',
+        'laboratory', 'lab ', 'مختبر',  # Arabic for laboratory
+        's.a.l', 'sal', 'sarl', 'co.', 'corp', 'inc.', 'ltd', 'llc',
+        'trading', 'group', 'gases', 'droguerie', 'store',
+        'medical group', 'marketing', 'liquid', 'sanita'
+    ]
+
+    # If it contains obvious company indicators, skip it
+    if any(keyword in company_lower for keyword in exclude_keywords):
+        return False
+
+    # Skip entries that look like just clinic numbers
+    if company_name.strip().lower() in ['clinic', 'center']:
+        return False
+
+    # Otherwise, assume it's a doctor/person
+    return True
 
 
 def parse_doctor_name(company):
-    """Extract first and last name from doctor company name."""
+    """
+    Extract first and last name from doctor company name.
+    Handles various formats including:
+    - Numbers with dashes: "8-MOHAMED EL BIZRI", "3- Dr Lena Makary"
+    - Doctor prefixes: "Dr", "DR", "Dr.", "Doctor"
+    - Slashes with numbers: "Dr Joseph/15", "Michel Al-Haddad/1"
+    - Single letter prefixes: "D Bernard Kikano"
+    - Combined formats: "9-Dr.Mohamad+Zeina", "12-dr khaled hajjar"
+
+    Args:
+        company (str): The company/vendor name from the database
+
+    Returns:
+        tuple: (first_name, last_name) or (None, None) if parsing fails
+    """
     if not company:
         return None, None
 
-    # Remove common prefixes
-    name = company
-    for prefix in ['Dr.', 'Dr', 'Doctor', 'DDS', 'DMD', 'PhD', 'MD']:
-        name = re.sub(f'^{prefix}\\.?\\s*', '', name, flags=re.IGNORECASE)
+    # Clean the input
+    name = company.strip()
 
-    parts = name.strip().split()
+    # Step 1: Remove leading numbers with optional dash/dot (e.g., "8-", "910- ", "3.")
+    name = re.sub(r'^\d+[-.]?\s*', '', name)
+
+    # Step 2: Remove standalone single letter prefixes like "D " (but not "Dr")
+    name = re.sub(r'^D\s+(?!r)', '', name, flags=re.IGNORECASE)
+
+    # Step 3: Remove doctor titles and prefixes (case insensitive)
+    # Matches: Dr, Dr., DR, Doctor, DDS, DMD, PhD, MD, DVM
+    name = re.sub(r'\b(dr|doctor|dds|dmd|phd|md|dvm)\.?\s*', '', name, flags=re.IGNORECASE)
+
+    # Step 4: Remove trailing slashes with numbers (e.g., "/15", "/1")
+    name = re.sub(r'/\d+$', '', name)
+
+    # Step 5: Handle special separators like "+" (e.g., "Mohamad+Zeina")
+    # Replace with space for proper splitting
+    name = name.replace('+', ' ')
+
+    # Step 6: Remove extra whitespace
+    name = ' '.join(name.split())
+
+    # Check if we have a valid name left
+    if not name:
+        return None, None
+
+    # Step 7: Split into parts
+    parts = name.split()
+
     if len(parts) >= 2:
-        return parts[0], ' '.join(parts[1:])
+        # First name is first part, last name is everything else
+        first_name = parts[0]
+        last_name = ' '.join(parts[1:])
+        return first_name, last_name
     elif len(parts) == 1:
+        # Only one name part - return as first name
         return parts[0], None
 
     return None, None
@@ -383,15 +443,15 @@ def migrate_doctors(mssql_conn, mysql_conn):
 
     try:
         mssql_cursor = mssql_conn.cursor()
-        query = "SELECT VENDSRH, COMPANY, PHONE, CONTACT FROM Vend"
+        query = "SELECT VENDSRH, COMPANY, PHONE, CONTACT FROM Vend WHERE TYPE = 2"
 
         if Config.TEST_MODE:
-            query = "SELECT TOP 50 VENDSRH, COMPANY, PHONE, CONTACT FROM Vend"
+            query = "SELECT TOP 50 VENDSRH, COMPANY, PHONE, CONTACT FROM Vend WHERE TYPE = 2"
 
         mssql_cursor.execute(query)
         rows = mssql_cursor.fetchall()
         total_records = len(rows)
-        print(f"📊 Found {total_records} vendor records to process")
+        print(f"📊 Found {total_records} doctors (TYPE=2) to migrate")
 
         if total_records == 0:
             print("⚠️ No records found to migrate")
@@ -607,9 +667,9 @@ def main():
         setup_database_tables(mysql)
 
         nationality_map = load_nationality_mapping(mssql)
-        migrate_patients(mssql, mysql, nationality_map)
+        # migrate_patients(mssql, mysql, nationality_map)
         migrate_doctors(mssql, mysql)
-        migrate_appointments(mssql, mysql)
+        # migrate_appointments(mssql, mysql)
 
         verify_migration(mysql)
 
