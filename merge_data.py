@@ -667,9 +667,9 @@ def main():
         setup_database_tables(mysql)
 
         nationality_map = load_nationality_mapping(mssql)
-        # migrate_patients(mssql, mysql, nationality_map)
+        migrate_patients(mssql, mysql, nationality_map)
         migrate_doctors(mssql, mysql)
-        # migrate_appointments(mssql, mysql)
+        migrate_appointments(mssql, mysql)
 
         verify_migration(mysql)
 
