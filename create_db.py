@@ -128,6 +128,7 @@ def create_tables(connection):
         revision_number INT,
         room VARCHAR(50),
         status VARCHAR(50),  -- ENUM not allowed (Scheduled, Completed, etc.)
+        missed BOOLEAN DEFAULT FALSE,
         reason_for_visit TEXT,
         diagnosis TEXT,
         prescription TEXT,
