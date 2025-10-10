@@ -96,6 +96,7 @@ def create_tables(connection):
     CREATE TABLE IF NOT EXISTS doctors (
         id INT AUTO_INCREMENT PRIMARY KEY,
         source_id INT,  -- Original doctor ID
+        title VARCHAR(50),
         first_name VARCHAR(50),
         father_name VARCHAR(100),
         last_name VARCHAR(50),
