@@ -208,6 +208,30 @@ def safe_time(time_str):
         return None
 
 
+def map_appointment_status(status_code):
+    """
+    Map old system status codes to new enum values.
+    Based on the status mapping:
+    0 = Scheduled (إنتظار)
+    1 = Attended (حضر)
+    2 = Missed (لم يحضر)
+    4 = Cancelled (ملغى)
+    5 = Rescheduled (إعادة جدولة)
+    8 = Deleted (محذوف)
+    """
+    status_map = {
+        0: 'scheduled',
+        1: 'attended',
+        2: 'missed',
+        4: 'cancelled',
+        5: 'rescheduled',
+        8: 'deleted'
+    }
+
+    # Default to 'scheduled' if status code is not recognized
+    return status_map.get(status_code, 'scheduled')
+
+
 def is_likely_doctor(company_name):
     """Check if vendor name suggests it's NOT a doctor/person (i.e., a company/lab)."""
     if not company_name:
@@ -460,11 +484,14 @@ def migrate_doctors(mssql_conn, mysql_conn):
         mysql_cursor = mysql_conn.cursor()
 
         insert_query = """
-        INSERT INTO doctors (source_id, first_name, last_name, phone, phone_alt) 
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO doctors (source_id, title, first_name, last_name, phone, phone_alt) 
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-            first_name = VALUES(first_name), last_name = VALUES(last_name),
-            phone = VALUES(phone), phone_alt = VALUES(phone_alt)
+            title = VALUES(title),
+            first_name = VALUES(first_name), 
+            last_name = VALUES(last_name),
+            phone = VALUES(phone), 
+            phone_alt = VALUES(phone_alt)
         """
 
         inserted, updated, skipped, errors = 0, 0, [], []
@@ -484,7 +511,14 @@ def migrate_doctors(mssql_conn, mysql_conn):
                     skipped.append(f"{sid}: {company} (no name parsed)")
                     continue
 
-                data = (sid, safe_string(first, 50), safe_string(last, 50), clean_phone(row.PHONE), clean_phone(row.CONTACT))
+                data = (
+                    sid,
+                    'Dr',  # Default title for all doctors
+                    safe_string(first, 50),
+                    safe_string(last, 50),
+                    clean_phone(row.PHONE),
+                    clean_phone(row.CONTACT)
+                )
                 mysql_cursor.execute(insert_query, data)
 
                 if mysql_cursor.rowcount == 1:
@@ -542,7 +576,7 @@ def migrate_doctors(mssql_conn, mysql_conn):
 # APPOINTMENT MIGRATION
 # ================================================================
 def migrate_appointments(mssql_conn, mysql_conn):
-    """Migrate appointments, storing the original status number."""
+    """Migrate appointments, mapping status codes to enum values."""
     print("\n" + "=" * 60 + "\nAPPOINTMENT MIGRATION STARTED\n" + "=" * 60)
 
     try:
@@ -586,11 +620,15 @@ def migrate_appointments(mssql_conn, mysql_conn):
                 duration_str = f"{(row.period or 15)} minutes"
                 reason = safe_string(row.comment) or safe_string(row.pat_name)
 
+                # Map the status code to the enum value
+                mapped_status = map_appointment_status(row.status)
+
                 data = (
                     row.id, row.pat_id, row.doc_id,
                     safe_date(row.date), safe_time(row.time),
                     duration_str, safe_string(row.room, 50),
-                    row.status, bool(row.missed), reason,
+                    mapped_status,
+                    bool(row.missed), reason,
                 )
                 mysql_cursor.execute(insert_query, data)
 
