@@ -25,7 +25,7 @@ class Config:
     MYSQL_HOST = "localhost"
     MYSQL_USER = "root"
     MYSQL_PASSWORD = "P@ssw0rd8899"
-    MYSQL_DATABASE = "patient_management_system"
+    MYSQL_DATABASE = "bizri_patient_management_system"
 
     # Migration Settings
     BATCH_SIZE = 100
