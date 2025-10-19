@@ -92,17 +92,25 @@ def clean_string(value, max_length=None):
 
 
 def clean_phone(phone):
-    """Clean and format phone numbers"""
+    """Clean and format phone numbers: remove spaces, add + prefix if missing"""
     if not phone or pd.isna(phone):
         return None
 
-    # Convert to string and remove all non-digit characters except +
+    # Convert to string and strip
     phone_str = str(phone).strip()
 
-    # Keep +, digits, spaces, dashes, parentheses
-    cleaned = re.sub(r'[^\d+\s\-()]', '', phone_str)
+    # Remove all spaces
+    phone_str = phone_str.replace(' ', '')
 
-    return cleaned if cleaned else None
+    # Return None if empty after cleanup
+    if not phone_str:
+        return None
+
+    # Add + prefix if not present
+    if not phone_str.startswith('+'):
+        phone_str = '+' + phone_str
+
+    return phone_str
 
 
 def parse_date(date_value):
@@ -428,8 +436,8 @@ def migrate_doctors(mysql_conn, excel_file):
                     skipped += 1
                     continue
 
-                # Generate source_id from name
-                source_id = f"DOC_{idx}"
+                # Generate source_id from index (numeric only)
+                source_id = str(idx)
 
                 data = (
                     source_id,
@@ -1107,6 +1115,54 @@ def migrate_inventory(mysql_conn, excel_file):
 
 
 # ================================================================
+# DATA CLEANUP
+# ================================================================
+
+def truncate_all_tables(mysql_conn):
+    """Drop all existing data from tables before migration"""
+    print("\n" + "=" * 60)
+    print("CLEANING EXISTING DATA")
+    print("=" * 60)
+
+    try:
+        cursor = mysql_conn.cursor()
+
+        # Disable foreign key checks
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+
+        # Tables in reverse order of dependencies
+        tables = [
+            'invoice_items',
+            'payments',
+            'invoices',
+            'appointments',
+            'treatments',
+            'patient_relationships',
+            'inventory',
+            'patients',
+            'doctors'
+        ]
+
+        for table in tables:
+            cursor.execute(f"TRUNCATE TABLE {table}")
+            print(f"🗑️  Cleared table: {table}")
+
+        # Re-enable foreign key checks
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+
+        mysql_conn.commit()
+        cursor.close()
+
+        print("✅ All tables cleared successfully")
+        print("=" * 60)
+
+    except Exception as e:
+        print(f"❌ Error truncating tables: {e}")
+        traceback.print_exc()
+        mysql_conn.rollback()
+
+
+# ================================================================
 # VERIFICATION
 # ================================================================
 
@@ -1168,6 +1224,9 @@ def main():
         return 1
 
     try:
+        # Clear existing data first
+        truncate_all_tables(mysql)
+
         # Migration order is important!
         # 1. Patients first (needed for lookups)
         migrate_patients(mysql, Config.EXCEL_FILE)
