@@ -100,7 +100,7 @@ def create_tables(connection):
         first_name VARCHAR(50),
         father_name VARCHAR(100),
         last_name VARCHAR(50),
-        specialization VARCHAR(100),
+        specialization VARCHAR(255),
         qualification VARCHAR(200),
         license_number VARCHAR(50),
         phone VARCHAR(100),

@@ -32,7 +32,7 @@ class Config:
     MYSQL_DATABASE = "hammoud_patient_management_system"
 
     # Excel File
-    EXCEL_FILE = "Hammoud_Clinics_Data.xlsx"
+    EXCEL_FILE = "databases/Hammoud_Clinics_Data.xlsx"
 
     # Migration Settings
     BATCH_SIZE = 50
