@@ -926,6 +926,7 @@ def migrate_treatments(mysql_conn, excel_file):
     try:
         # Create lookup maps
         patient_map = create_patient_lookup_map(mysql_conn)
+        doctor_map = create_doctor_lookup_map(mysql_conn)
 
         # Read Excel sheet
         df = pd.read_excel(excel_file, sheet_name='Operations')
@@ -940,12 +941,12 @@ def migrate_treatments(mysql_conn, excel_file):
 
         insert_query = """
         INSERT INTO treatments (
-            source_id, patient_id, tooth_number, procedure_code,
+            source_id, patient_id, doctor_id, tooth_number, procedure_code,
             procedure_name, procedure_group, treatment_plan, status,
             price, planned_date, start_date, completion_date, notes,
             created_at, updated_at
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
@@ -957,6 +958,7 @@ def migrate_treatments(mysql_conn, excel_file):
 
         inserted, updated, errors = 0, 0, []
         missing_patients = 0
+        missing_doctors = 0
 
         for idx, row in df.iterrows():
             try:
@@ -966,11 +968,18 @@ def migrate_treatments(mysql_conn, excel_file):
                 if not patient_id:
                     missing_patients += 1
 
+                # Lookup doctor ID from created_by field with lowercase comparison
+                doctor_id = lookup_doctor_id(row.get('created_by'), doctor_map)
+
+                if not doctor_id:
+                    missing_doctors += 1
+
                 price = float(row.get('price', 0)) if not pd.isna(row.get('price')) else 0.0
 
                 data = (
                     clean_string(str(row.get('id')), 50),  # source_id
                     patient_id,
+                    doctor_id,  # doctor_id from created_by field
                     clean_string(row.get('tooth_nb'), 20),
                     clean_string(row.get('code'), 50),
                     clean_string(row.get('name'), 200),
@@ -1012,6 +1021,7 @@ def migrate_treatments(mysql_conn, excel_file):
         print(f"   Updated: {updated}")
         print(f"   Errors: {len(errors)}")
         print(f"   Missing Patients: {missing_patients}")
+        print(f"   Missing Doctors: {missing_doctors}")
         print("-" * 60)
 
         cursor.close()

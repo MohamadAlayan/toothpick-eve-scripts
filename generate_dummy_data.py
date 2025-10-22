@@ -4,7 +4,7 @@
 #
 # Features:
 #   - 3000+ patients with realistic demographics
-#   - 3+ years of historical data (2022-2026)
+#   - 6 years (2020-2026) of appointment history
 #   - Complete appointment, treatment, invoice, and payment records
 #   - Realistic relationships between entities
 #   - Configurable data generation parameters
@@ -28,11 +28,11 @@ CONFIG = {
     'DATABASE_NAME': 'dummy_patient_management_system',
 
     # Data generation parameters
-    'NUM_PATIENTS': 3000,
-    'NUM_DOCTORS': 15,
+    'NUM_PATIENTS': 5000,
+    'NUM_DOCTORS': 25,
     'NUM_INVENTORY_ITEMS': 200,
-    'START_DATE': datetime(2022, 1, 1),
-    'END_DATE': datetime(2026, 12, 31),  # Extended to end of 2026
+    'START_DATE': datetime(2020, 1, 1),
+    'END_DATE': datetime(2026, 12, 31),
 
     # Business rules
     'AVG_APPOINTMENTS_PER_PATIENT': 4,
@@ -95,6 +95,50 @@ COMMON_ALLERGIES = [
     'Penicillin', 'Latex', 'Local Anesthetics', 'Aspirin',
     'Ibuprofen', 'Codeine', 'None Known'
 ]
+
+
+# Phone number formats by country
+def generate_phone_number(country=None):
+    """Generate realistic phone numbers for different countries"""
+    if country is None:
+        country = random.choice(['lebanon', 'egypt', 'usa', 'uae', 'ksa', 'qatar'])
+
+    if country == 'lebanon':
+        # Lebanon: +961 XX XXX XXX (mobile) or +961 X XXX XXX (landline)
+        prefix = random.choice(['3', '70', '71', '76', '78', '79', '81'])  # Mobile prefixes
+        if len(prefix) == 1:
+            return f"+961 {prefix} {random.randint(100, 999)} {random.randint(100, 999)}"
+        else:
+            return f"+961 {prefix} {random.randint(100, 999)} {random.randint(100, 999)}"
+
+    elif country == 'egypt':
+        # Egypt: +20 1X XXXX XXXX (mobile)
+        operator = random.choice(['10', '11', '12', '15'])  # Vodafone, Etisalat, Orange, WE
+        return f"+20 {operator} {random.randint(1000, 9999)} {random.randint(1000, 9999)}"
+
+    elif country == 'usa':
+        # USA: +1 (XXX) XXX-XXXX
+        area_code = random.randint(200, 999)
+        exchange = random.randint(200, 999)
+        number = random.randint(1000, 9999)
+        return f"+1 ({area_code}) {exchange}-{number}"
+
+    elif country == 'uae':
+        # UAE: +971 5X XXX XXXX (mobile)
+        operator = random.choice(['50', '52', '54', '55', '56', '58'])
+        return f"+971 {operator} {random.randint(100, 999)} {random.randint(1000, 9999)}"
+
+    elif country == 'ksa':
+        # Saudi Arabia: +966 5X XXX XXXX (mobile)
+        operator = random.choice(['50', '53', '54', '55', '56', '57', '58', '59'])
+        return f"+966 {operator} {random.randint(100, 999)} {random.randint(1000, 9999)}"
+
+    elif country == 'qatar':
+        # Qatar: +974 XXXX XXXX (mobile)
+        prefix = random.choice(['3', '5', '6', '7'])
+        return f"+974 {prefix}{random.randint(100, 999)} {random.randint(1000, 9999)}"
+
+    return fake.phone_number()  # Fallback
 
 
 def create_database_connection():
@@ -337,6 +381,44 @@ def create_tables(connection):
     print("✅ All tables created successfully!\n")
 
 
+def truncate_tables(connection):
+    """Truncate all tables to remove old data before generating new data"""
+    cursor = connection.cursor()
+
+    print("🗑️  Truncating existing data...")
+
+    # List of tables in reverse order to avoid foreign key issues (even though we don't have FKs)
+    tables = [
+        'payments',
+        'invoice_items',
+        'invoices',
+        'treatments',
+        'appointments',
+        'patient_relationships',
+        'inventory',
+        'patients',
+        'doctors'
+    ]
+
+    try:
+        # Disable foreign key checks temporarily (just in case)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+
+        for table in tables:
+            cursor.execute(f"TRUNCATE TABLE {table}")
+            print(f"   ✓ Truncated '{table}'")
+
+        # Re-enable foreign key checks
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+
+        connection.commit()
+        cursor.close()
+        print("✅ All tables truncated successfully!\n")
+    except Error as e:
+        print(f"⚠️  Warning during truncation: {e}")
+        print("   Continuing anyway...\n")
+
+
 def random_date_between(start, end):
     """Generate random date between two dates"""
     delta = end - start
@@ -363,8 +445,8 @@ def generate_doctors(connection, num_doctors):
             'specialization': specialization,
             'qualification': random.choice(['DDS', 'DMD', 'BDS, MDS', 'DDS, PhD']),
             'license_number': f'LIC{random.randint(10000, 99999)}',
-            'phone': fake.phone_number(),
-            'phone_alt': fake.phone_number() if random.random() > 0.5 else None,
+            'phone': generate_phone_number('lebanon'),  # Doctors mostly have Lebanese numbers
+            'phone_alt': generate_phone_number('lebanon') if random.random() > 0.5 else None,
             'email': fake.email(),
             'department': 'Dentistry',
             'consultation_fee': round(random.uniform(50, 150), 2),
@@ -405,23 +487,26 @@ def generate_patients(connection, num_patients):
     print(f"👥 Generating {num_patients} patients...")
 
     for i in range(1, num_patients + 1):
-        gender = random.choice(['Male', 'Female'])
+        gender = random.choice(['male', 'female', 'male', 'female', 'male', 'female'])  # 95% male/female, 5% other/unknown
+        if random.random() > 0.95:
+            gender = random.choice(['other', 'unknown'])
+
         dob = fake.date_of_birth(minimum_age=1, maximum_age=90)
         created_date = random_date_between(CONFIG['START_DATE'], CONFIG['END_DATE'])
 
         patient = {
             'source_id': f'PAT{i:06d}',
-            'first_name': fake.first_name_male() if gender == 'Male' else fake.first_name_female(),
+            'first_name': fake.first_name_male() if gender == 'male' else fake.first_name_female() if gender == 'female' else fake.first_name(),
             'father_name': fake.first_name_male(),
             'last_name': fake.last_name(),
             'mother_name': fake.first_name_female(),
             'id_nb': f'ID{random.randint(100000000, 999999999)}',
             'date_of_birth': dob,
             'gender': gender,
-            'marital_status': random.choice(['Single', 'Married', 'Divorced', 'Widowed']),
+            'marital_status': random.choice(['single', 'married', 'divorced', 'widowed']),
             'nationality': 'Lebanese',
-            'phone': fake.phone_number(),
-            'phone_alt': fake.phone_number() if random.random() > 0.7 else None,
+            'phone': generate_phone_number(),
+            'phone_alt': generate_phone_number() if random.random() > 0.7 else None,
             'email': fake.email() if random.random() > 0.3 else None,
             'address_line1': fake.street_address(),
             'address_line2': fake.secondary_address() if random.random() > 0.8 else None,
@@ -489,14 +574,14 @@ def generate_appointments(connection, patients, doctors):
 
             # Status based on date
             if appointment_date > datetime.now():
-                status = 'Scheduled'
+                status = random.choice(['scheduled', 'confirmed', 'pending'])
                 missed = False
             else:
                 if random.random() < CONFIG['APPOINTMENT_SHOW_RATE']:
-                    status = random.choice(['Completed', 'Completed', 'Completed', 'In Progress'])
+                    status = random.choice(['completed', 'completed', 'completed', 'attended', 'checked_in'])
                     missed = False
                 else:
-                    status = 'Cancelled'
+                    status = random.choice(['no_show', 'missed', 'cancelled'])
                     missed = True
 
             doctor = random.choice(doctors)
@@ -514,8 +599,8 @@ def generate_appointments(connection, patients, doctors):
                 'status': status,
                 'missed': missed,
                 'reason_for_visit': random.choice(['Checkup', 'Cleaning', 'Filling', 'Crown', 'Extraction', 'Consultation']),
-                'diagnosis': fake.text(max_nb_chars=100) if status == 'Completed' and random.random() > 0.5 else None,
-                'prescription': fake.text(max_nb_chars=100) if status == 'Completed' and random.random() > 0.7 else None,
+                'diagnosis': fake.text(max_nb_chars=100) if status == 'completed' and random.random() > 0.5 else None,
+                'prescription': fake.text(max_nb_chars=100) if status == 'completed' and random.random() > 0.7 else None,
                 'notes': fake.text(max_nb_chars=150) if random.random() > 0.7 else None,
                 'created_at': appointment_date,
                 'updated_at': datetime.now()
@@ -556,7 +641,7 @@ def generate_treatments(connection, appointments, patients, doctors):
 
     print(f"💉 Generating treatments...")
 
-    completed_appointments = [apt for apt in appointments if apt['status'] == 'Completed']
+    completed_appointments = [apt for apt in appointments if apt['status'] == 'completed']
 
     for appointment in completed_appointments:
         # Each completed appointment gets 1-3 treatments
@@ -574,7 +659,7 @@ def generate_treatments(connection, appointments, patients, doctors):
                 'procedure_name': procedure[1],
                 'procedure_group': procedure[2],
                 'treatment_plan': random.choice(['Standard', 'Comprehensive', 'Emergency', 'Cosmetic']),
-                'status': 'Completed' if random.random() < CONFIG['TREATMENT_COMPLETION_RATE'] else 'In Progress',
+                'status': 'completed' if random.random() < CONFIG['TREATMENT_COMPLETION_RATE'] else 'in_progress',
                 'price': round(procedure[3] * random.uniform(0.9, 1.1), 2),
                 'planned_date': appointment['appointment_date'] - timedelta(days=random.randint(1, 30)),
                 'start_date': appointment['appointment_date'],
@@ -623,19 +708,25 @@ def generate_invoices_and_payments(connection, appointments, treatments):
 
     print(f"💰 Generating invoices, items, and payments...")
 
-    # Group treatments by appointment
-    treatments_by_appointment = {}
+    # Since treatments don't have appointment_id anymore, we'll create invoices based on appointments
+    # and generate treatments within this function or link them by date and patient
+
+    # Group treatments by patient_id and date for easier lookup
+    treatments_by_patient_date = {}
     for treatment in treatments:
-        apt_id = treatment['appointment_id']
-        if apt_id not in treatments_by_appointment:
-            treatments_by_appointment[apt_id] = []
-        treatments_by_appointment[apt_id].append(treatment)
+        key = (treatment['patient_id'], treatment['start_date'])
+        if key not in treatments_by_patient_date:
+            treatments_by_patient_date[key] = []
+        treatments_by_patient_date[key].append(treatment)
 
     for appointment in appointments:
-        if appointment['status'] != 'Completed':
+        if appointment['status'] != 'completed':
             continue
 
-        apt_treatments = treatments_by_appointment.get(appointment['source_id'], [])
+        # Find treatments for this appointment by patient and date
+        key = (appointment['patient_id'], appointment['appointment_date'])
+        apt_treatments = treatments_by_patient_date.get(key, [])
+
         if not apt_treatments:
             continue
 
@@ -663,13 +754,13 @@ def generate_invoices_and_payments(connection, appointments, treatments):
         rand = random.random()
         if rand < CONFIG['PAYMENT_FULL_RATE']:
             amount_paid = total_amount
-            status = 'Paid'
+            status = 'paid'
         elif rand < CONFIG['PAYMENT_FULL_RATE'] + CONFIG['PAYMENT_PARTIAL_RATE']:
             amount_paid = total_amount * random.uniform(0.3, 0.7)
-            status = 'Partially Paid'
+            status = 'partially_paid'
         else:
             amount_paid = 0
-            status = 'Unpaid'
+            status = 'unpaid'
 
         balance_due = total_amount - amount_paid
 
@@ -744,7 +835,7 @@ def generate_invoices_and_payments(connection, appointments, treatments):
         # Create payments
         if amount_paid > 0:
             # Randomly split into 1-3 payments
-            if status == 'Paid':
+            if status == 'paid':
                 num_payments = 1 if random.random() > 0.2 else random.randint(2, 3)
                 remaining = amount_paid
 
@@ -875,7 +966,7 @@ def generate_statistics(connection):
         print(f"   {table.capitalize():20}: {count:,} records")
 
     # Additional statistics
-    cursor.execute("SELECT COUNT(*) FROM appointments WHERE status = 'Completed'")
+    cursor.execute("SELECT COUNT(*) FROM appointments WHERE status = 'completed'")
     completed_appts = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM appointments WHERE missed = TRUE")
@@ -914,7 +1005,8 @@ def main():
     print("\n" + "=" * 60)
     print("🚀 TOOTHPICK EVE - DUMMY DATA GENERATOR")
     print("=" * 60)
-    print(f"Target: {CONFIG['NUM_PATIENTS']:,} patients over multiple years")
+    print(f"Target: {CONFIG['NUM_PATIENTS']:,} patients over 7 years")
+    print(f"Doctors: {CONFIG['NUM_DOCTORS']} doctors")
     print(f"Period: {CONFIG['START_DATE'].strftime('%Y-%m-%d')} to {CONFIG['END_DATE'].strftime('%Y-%m-%d')}")
     print("=" * 60 + "\n")
 
@@ -928,6 +1020,9 @@ def main():
     try:
         # Create tables
         create_tables(connection)
+
+        # Truncate existing data
+        truncate_tables(connection)
 
         # Generate data in proper order
         doctors = generate_doctors(connection, CONFIG['NUM_DOCTORS'])
